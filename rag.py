@@ -40,7 +40,8 @@ class ChatPDF:
         # model.save('./bge-small-en-v1.5/')
         # model = SentenceTransformer("./bge-small-en-v1.5/")
         # embedding_model = Embedding(model_name="BAAI/bge-base-en", max_length=512)
-        modelPath = "bge-small-en-v1.5"
+        # modelPath = "bge-small-en-v1.5"
+        modelPath = "all-MiniLM-L6-v2"
         embeddings = HuggingFaceEmbeddings(model_name=modelPath)
         #FastEmbedEmbeddings()
         vector_store = Chroma.from_documents(documents=chunks, embedding=embeddings)
