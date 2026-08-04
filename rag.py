@@ -1,4 +1,11 @@
 import joblib
+from operator import itemgetter
+
+try:
+    from langchain.memory import ConversationBufferMemory
+except ImportError:
+    from langchain_classic.memory import ConversationBufferMemory
+
 from langchain_chroma import Chroma
 from langchain_ollama import ChatOllama
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -7,7 +14,7 @@ from langchain_community.vectorstores.utils import filter_complex_metadata
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 
 
 class ChatPDF:
@@ -18,15 +25,18 @@ class ChatPDF:
     def __init__(self):
         self.model = ChatOllama(model="glm-5.2:cloud", base_url="http://127.0.0.1:11434")
         self.text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=100)
-        self.prompt = PromptTemplate.from_template(
-            """
-            <s> [INST] You are an assistant for question-answering tasks. Use the following pieces of retrieved context 
-            to answer the question. If you don't know the answer, just say that you don't know. Use three sentences
-             maximum and keep the answer concise. [/INST] </s> 
-            [INST] Question: {question} 
-            Context: {context} 
-            Answer: [/INST]
-            """
+        self.memory = ConversationBufferMemory()
+        self.prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "You are an assistant for question-answering tasks. Use the following pieces of retrieved context and previous conversation history to answer the question. If you don't know the answer, just say that you don't know. Keep the answer concise.",
+                ),
+                (
+                    "human",
+                    "Previous conversation:\n{history}\n\nQuestion: {question}\nContext: {context}",
+                ),
+            ]
         )
 
     def ingest(self, pdf_file_path: str):
@@ -44,18 +54,37 @@ class ChatPDF:
             },
         )
 
-        self.chain = ({"context": self.retriever, "question": RunnablePassthrough()}
-                      | self.prompt
-                      | self.model
-                      | StrOutputParser())
+        self.chain = (
+            {
+                "context": itemgetter("question") | self.retriever,
+                "question": itemgetter("question"),
+                "history": itemgetter("history"),
+            }
+            | self.prompt
+            | self.model
+            | StrOutputParser()
+        )
 
     def ask(self, query: str):
         if not self.chain:
             return "Please, add a PDF document first."
 
-        return self.chain.invoke(query)
+        # 1. Fetch conversation history from memory
+        history_str = self.memory.load_memory_variables({})["history"]
+        print("--- Conversation History ---")
+        print(history_str)
+        print("----------------------------")
+
+        # 2. Invoke chain with question and history
+        response = self.chain.invoke({"question": query, "history": history_str})
+
+        # 3. Save question and answer to conversation memory
+        self.memory.save_context({"question": query}, {"answer": response})
+
+        return response
 
     def clear(self):
         self.vector_store = None
         self.retriever = None
         self.chain = None
+        self.memory.clear()

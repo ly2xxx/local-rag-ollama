@@ -13,6 +13,8 @@ dependencies = [
     "langchain-huggingface>=0.0.1",
     "langchain-text-splitters>=0.0.1",
     "sentence-transformers>=2.2.2",
+    "numpy>=2.0.0",
+    "onnxruntime",
     "torchvision",
     "streamlit-chat>=0.1.1",
     "pypdf>=3.17.1",
