@@ -1,5 +1,6 @@
-import joblib
 from operator import itemgetter
+
+import joblib
 
 try:
     from langchain.memory import ConversationBufferMemory
@@ -7,14 +8,14 @@ except ImportError:
     from langchain_classic.memory import ConversationBufferMemory
 
 from langchain_chroma import Chroma
-from langchain_ollama import ChatOllama
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores.utils import filter_complex_metadata
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_ollama import ChatOllama
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 class ChatPDF:
@@ -23,8 +24,12 @@ class ChatPDF:
     chain = None
 
     def __init__(self):
-        self.model = ChatOllama(model="glm-5.2:cloud", base_url="http://127.0.0.1:11434")
-        self.text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=100)
+        self.model = ChatOllama(
+            model="glm-5.2:cloud", base_url="http://127.0.0.1:11434"
+        )
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1024, chunk_overlap=100
+        )
         self.memory = ConversationBufferMemory()
         self.prompt = ChatPromptTemplate.from_messages(
             [
@@ -77,7 +82,9 @@ class ChatPDF:
 
         # Clear memory and store summarized context (matching Listing 2)
         self.memory.clear()
-        self.memory.save_context({"question": "Summary of previous conversation"}, {"answer": summary_text})
+        self.memory.save_context(
+            {"question": "Summary of previous conversation"}, {"answer": summary_text}
+        )
         print("--- History Summarization Complete ---")
 
     def ask(self, query: str):
@@ -85,7 +92,10 @@ class ChatPDF:
             return "Please, add a PDF document first."
 
         # Check if history has 8 or more messages and summarize (matching Listing 3)
-        if hasattr(self.memory, "chat_memory") and len(self.memory.chat_memory.messages) >= 3:
+        if (
+            hasattr(self.memory, "chat_memory")
+            and len(self.memory.chat_memory.messages) >= 3
+        ):
             self.summarize_history()
 
         # 1. Fetch conversation history from memory
