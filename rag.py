@@ -65,9 +65,28 @@ class ChatPDF:
             | StrOutputParser()
         )
 
+    def summarize_history(self):
+        long_history = self.memory.load_memory_variables({})["history"]
+        if not long_history.strip():
+            return
+
+        print("--- Summarizing long conversation history using glm-5.2:cloud ---")
+        prompt = f"Summarize the following conversation history concisely, retaining all key facts and context:\n\n{long_history}"
+        summary_msg = self.model.invoke(prompt)
+        summary_text = summary_msg.content.strip()
+
+        # Clear memory and store summarized context (matching Listing 2)
+        self.memory.clear()
+        self.memory.save_context({"question": "Summary of previous conversation"}, {"answer": summary_text})
+        print("--- History Summarization Complete ---")
+
     def ask(self, query: str):
         if not self.chain:
             return "Please, add a PDF document first."
+
+        # Check if history has 8 or more messages and summarize (matching Listing 3)
+        if hasattr(self.memory, "chat_memory") and len(self.memory.chat_memory.messages) >= 3:
+            self.summarize_history()
 
         # 1. Fetch conversation history from memory
         history_str = self.memory.load_memory_variables({})["history"]
