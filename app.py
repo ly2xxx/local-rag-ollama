@@ -40,7 +40,7 @@ def read_and_save_file():
 
 
 def page():
-    if len(st.session_state) == 0:
+    if "assistant" not in st.session_state:
         st.session_state["messages"] = []
         st.session_state["assistant"] = ChatPDF()
 

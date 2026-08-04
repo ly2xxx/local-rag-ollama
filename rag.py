@@ -16,7 +16,7 @@ class ChatPDF:
     chain = None
 
     def __init__(self):
-        self.model = ChatOllama(model="glm-5.2:cloud")
+        self.model = ChatOllama(model="glm-5.2:cloud", base_url="http://127.0.0.1:11434")
         self.text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=100)
         self.prompt = PromptTemplate.from_template(
             """
@@ -38,10 +38,9 @@ class ChatPDF:
         embeddings = HuggingFaceEmbeddings(model_name=modelPath)
         vector_store = Chroma.from_documents(documents=chunks, embedding=embeddings)
         self.retriever = vector_store.as_retriever(
-            search_type="similarity_score_threshold",
+            search_type="similarity",
             search_kwargs={
                 "k": 3,
-                "score_threshold": 0.5,
             },
         )
 
