@@ -1,15 +1,13 @@
-from langchain.vectorstores import Chroma
-from langchain.chat_models import ChatOllama
-from langchain.embeddings import FastEmbedEmbeddings
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.schema.output_parser import StrOutputParser
-from langchain.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema.runnable import RunnablePassthrough
-from langchain.prompts import PromptTemplate
-from langchain.vectorstores.utils import filter_complex_metadata
-from sentence_transformers import SentenceTransformer
-from fastembed.embedding import FlagEmbedding as Embedding
+import joblib
+from langchain_chroma import Chroma
+from langchain_ollama import ChatOllama
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.vectorstores.utils import filter_complex_metadata
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.prompts import PromptTemplate
 
 
 class ChatPDF:
@@ -18,7 +16,7 @@ class ChatPDF:
     chain = None
 
     def __init__(self):
-        self.model = ChatOllama(model="mistral")
+        self.model = ChatOllama(model="glm-5.2:cloud")
         self.text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=100)
         self.prompt = PromptTemplate.from_template(
             """
@@ -36,14 +34,8 @@ class ChatPDF:
         chunks = self.text_splitter.split_documents(docs)
         chunks = filter_complex_metadata(chunks)
 
-        # model = SentenceTransformer("BAAI/bge-small-en-v1.5")
-        # model.save('./bge-small-en-v1.5/')
-        # model = SentenceTransformer("./bge-small-en-v1.5/")
-        # embedding_model = Embedding(model_name="BAAI/bge-base-en", max_length=512)
-        # modelPath = "bge-small-en-v1.5"
         modelPath = "all-MiniLM-L6-v2"
         embeddings = HuggingFaceEmbeddings(model_name=modelPath)
-        #FastEmbedEmbeddings()
         vector_store = Chroma.from_documents(documents=chunks, embedding=embeddings)
         self.retriever = vector_store.as_retriever(
             search_type="similarity_score_threshold",
