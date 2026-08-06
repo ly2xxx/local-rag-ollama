@@ -5,6 +5,7 @@ from streamlit_chat import message
 from rag import ChatPDF
 
 try:
+    import agent
     from agent import SmolAgentHelper
 except ImportError:
     SmolAgentHelper = None
@@ -29,12 +30,35 @@ def process_input():
         st.session_state["messages"].append((agent_text, False))
 
 
+def save_agent_files():
+    if "agent_uploaded_files" not in st.session_state:
+        st.session_state["agent_uploaded_files"] = []
+
+    for file in st.session_state.get("agent_file_uploader", []):
+        file_path = os.path.join(tempfile.gettempdir(), file.name)
+        with open(file_path, "wb") as f:
+            f.write(file.getbuffer())
+        if not any(fpath == file_path for _, fpath in st.session_state["agent_uploaded_files"]):
+            st.session_state["agent_uploaded_files"].append((file.name, file_path))
+
+
 def process_agent_input():
     if st.session_state["agent_user_input"] and len(st.session_state["agent_user_input"].strip()) > 0:
         user_text = st.session_state["agent_user_input"].strip()
+
+        # Build prompt hint if PDF files are uploaded for the agent
+        uploaded_info = ""
+        if st.session_state.get("agent_uploaded_files"):
+            file_list = ", ".join([f"'{name}' at path '{path}'" for name, path in st.session_state["agent_uploaded_files"]])
+            uploaded_info = f"[Available uploaded files to read using your read_pdf or read_file tool: {file_list}]\n\n"
+
+        prompt_with_context = uploaded_info + user_text
+
         with st.session_state["agent_thinking_spinner"], st.spinner("Agent Thinking..."):
             try:
-                response = st.session_state["agent_helper"].ask(user_text)
+                # Ensure fresh helper with latest tools
+                helper = SmolAgentHelper()
+                response = helper.ask(prompt_with_context)
             except Exception as e:
                 response = f"Error running agent: {e}"
 
@@ -72,12 +96,8 @@ def page():
     if "agent_messages" not in st.session_state:
         st.session_state["agent_messages"] = []
 
-    if "agent_helper" not in st.session_state and SmolAgentHelper is not None:
-        try:
-            st.session_state["agent_helper"] = SmolAgentHelper()
-        except Exception as e:
-            st.session_state["agent_helper"] = None
-            st.session_state["agent_init_error"] = str(e)
+    if "agent_uploaded_files" not in st.session_state:
+        st.session_state["agent_uploaded_files"] = []
 
     st.header("ChatPDF & SmolAgent")
 
@@ -100,13 +120,27 @@ def page():
         st.text_input("Message", key="user_input", on_change=process_input)
 
     with tab_agent:
+        st.subheader("Upload PDF Document for Agent")
+        st.file_uploader(
+            "Upload document for Agent",
+            type=["pdf", "txt"],
+            key="agent_file_uploader",
+            on_change=save_agent_files,
+            label_visibility="collapsed",
+            accept_multiple_files=True,
+        )
+
+        if st.session_state.get("agent_uploaded_files"):
+            st.caption("Available files for Agent:")
+            for name, fpath in st.session_state["agent_uploaded_files"]:
+                st.text(f"📄 {name} ({fpath})")
+
         st.subheader("SmolAgents + LiteLLM (Ollama)")
-        if st.session_state.get("agent_helper") is not None:
+        if SmolAgentHelper is not None:
             display_agent_messages()
             st.text_input("Ask Agent", key="agent_user_input", on_change=process_agent_input)
         else:
-            err = st.session_state.get("agent_init_error", "Loading smolagents & litellm...")
-            st.info(f"Agent Status: {err}")
+            st.info("Loading smolagents & litellm...")
 
 
 if __name__ == "__main__":
