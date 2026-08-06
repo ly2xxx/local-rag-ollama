@@ -1,7 +1,8 @@
-"""Agent module using smolagents, LiteLLMModel, and custom PDF / file reading tools."""
+"""Agent module with dynamic LLM routing between ToolCallingAgent and CodeAgent using LiteLLM."""
 
 import os
 import pypdf
+import litellm
 from smolagents import CodeAgent, LiteLLMModel, ToolCallingAgent, tool
 
 
@@ -58,7 +59,6 @@ class SmolAgentHelper:
         model_id: str = "ollama/glm-5.2:cloud",
         api_base: str = "http://127.0.0.1:11434",
         add_base_tools: bool = False,
-        use_code_agent: bool = False,
     ):
         self.model_id = model_id
         self.api_base = api_base
@@ -69,44 +69,69 @@ class SmolAgentHelper:
             api_base=self.api_base,
             num_ctx=8192,
         )
+        self.tools = [read_pdf, read_file]
 
-        tools = [read_pdf, read_file]
-
-        if use_code_agent:
-            self.agent = CodeAgent(
-                tools=tools,
-                model=self.model,
-                add_base_tools=self.add_base_tools,
+    def route_agent_type(self, prompt: str) -> str:
+        """Use LiteLLM to classify whether user input needs CodeAgent or ToolCallingAgent."""
+        routing_prompt = (
+            "You are a router that decides which AI agent mode to use for a request.\n\n"
+            "Agent Modes:\n"
+            "- CODE_AGENT: Use when the user asks for math calculations, averages, statistics, writing code, executing python, multi-step logic, or data processing.\n"
+            "- TOOL_CALLING: Use for standard document retrieval, simple file reading, questions about files, or general conversational Q&A.\n\n"
+            f"User Request: {prompt}\n\n"
+            "Return EXACTLY ONE WORD choice: CODE_AGENT or TOOL_CALLING."
+        )
+        try:
+            response = litellm.completion(
+                model=self.model_id,
+                api_base=self.api_base,
+                messages=[{"role": "user", "content": routing_prompt}],
             )
-        else:
-            self.agent = ToolCallingAgent(
-                tools=tools,
-                model=self.model,
-                add_base_tools=self.add_base_tools,
-            )
+            content = str(response.choices[0].message.content).strip().upper()
+            print(f"[LLM Router Output]: '{content}'")
+            if "CODE" in content:
+                return "CODE_AGENT"
+            return "TOOL_CALLING"
+        except Exception as e:
+            print(f"[Router Warning] Routing failed ({e}), defaulting to TOOL_CALLING")
+            return "TOOL_CALLING"
 
     def ask(self, prompt: str) -> str:
-        """Run the agent with a given prompt and return the result."""
-        result = self.agent.run(prompt)
-        return str(result)
+        """Dynamically route and run the query with CodeAgent or ToolCallingAgent."""
+        agent_mode = self.route_agent_type(prompt)
+        print(f"[LLM Router] Prompt routed to -> {agent_mode}")
+
+        if agent_mode == "CODE_AGENT":
+            agent = CodeAgent(
+                tools=[],
+                model=self.model,
+                add_base_tools=False,
+            )
+        else:
+            agent = ToolCallingAgent(
+                tools=self.tools,
+                model=self.model,
+                add_base_tools=self.add_base_tools,
+            )
+
+        result = agent.run(prompt)
+        return f"**(Selected Mode: `{agent_mode}`)**\n\n{result}"
 
 
 def create_agent(
     model_id: str = "ollama/glm-5.2:cloud",
     api_base: str = "http://127.0.0.1:11434",
     add_base_tools: bool = False,
-    use_code_agent: bool = False,
 ) -> SmolAgentHelper:
     return SmolAgentHelper(
         model_id=model_id,
         api_base=api_base,
         add_base_tools=add_base_tools,
-        use_code_agent=use_code_agent,
     )
 
 
 if __name__ == "__main__":
-    print("Testing smolagents + read_pdf / read_file tools...")
-    agent_helper = create_agent(add_base_tools=False)
-    response = agent_helper.ask("Read the file test.txt using your tools.")
-    print("Agent Response:", response)
+    print("Testing smolagents + litellm router...")
+    helper = create_agent()
+    res = helper.ask("what's the average of 80, 90, 99, 70 ?")
+    print(res)
