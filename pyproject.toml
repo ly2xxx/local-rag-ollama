@@ -3,7 +3,7 @@ name = "local-rag-example"
 version = "0.1.0"
 description = "Local RAG example using LangChain, Streamlit, and Ollama"
 readme = "README.md"
-requires-python = ">=3.9,<3.12"
+requires-python = ">=3.10,<3.12"
 dependencies = [
     "langchain>=0.1.0",
     "langchain-community>=0.0.20",
@@ -24,4 +24,6 @@ dependencies = [
     "chromadb>=0.4.18",
     "streamlit>=1.29.0",
     "watchdog>=3.0.0",
+    "smolagents>=1.26.0",
+    "litellm>=1.95.0",
 ]

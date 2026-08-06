@@ -4,7 +4,12 @@ import streamlit as st
 from streamlit_chat import message
 from rag import ChatPDF
 
-st.set_page_config(page_title="ChatPDF")
+try:
+    from agent import SmolAgentHelper
+except ImportError:
+    SmolAgentHelper = None
+
+st.set_page_config(page_title="ChatPDF & SmolAgent")
 
 
 def display_messages():
@@ -22,6 +27,26 @@ def process_input():
 
         st.session_state["messages"].append((user_text, True))
         st.session_state["messages"].append((agent_text, False))
+
+
+def process_agent_input():
+    if st.session_state["agent_user_input"] and len(st.session_state["agent_user_input"].strip()) > 0:
+        user_text = st.session_state["agent_user_input"].strip()
+        with st.session_state["agent_thinking_spinner"], st.spinner("Agent Thinking..."):
+            try:
+                response = st.session_state["agent_helper"].ask(user_text)
+            except Exception as e:
+                response = f"Error running agent: {e}"
+
+        st.session_state["agent_messages"].append((user_text, True))
+        st.session_state["agent_messages"].append((response, False))
+
+
+def display_agent_messages():
+    st.subheader("Agent Chat")
+    for i, (msg, is_user) in enumerate(st.session_state["agent_messages"]):
+        message(msg, is_user=is_user, key=f"agent_{i}")
+    st.session_state["agent_thinking_spinner"] = st.empty()
 
 
 def read_and_save_file():
@@ -44,7 +69,17 @@ def page():
         st.session_state["messages"] = []
         st.session_state["assistant"] = ChatPDF()
 
-    st.header("ChatPDF")
+    if "agent_messages" not in st.session_state:
+        st.session_state["agent_messages"] = []
+
+    if "agent_helper" not in st.session_state and SmolAgentHelper is not None:
+        try:
+            st.session_state["agent_helper"] = SmolAgentHelper()
+        except Exception as e:
+            st.session_state["agent_helper"] = None
+            st.session_state["agent_init_error"] = str(e)
+
+    st.header("ChatPDF & SmolAgent")
 
     tab_rag, tab_agent = st.tabs(["RAG", "AGENT"])
 
@@ -65,8 +100,13 @@ def page():
         st.text_input("Message", key="user_input", on_change=process_input)
 
     with tab_agent:
-        st.subheader("Agent")
-        st.write("Hello World")
+        st.subheader("SmolAgents + LiteLLM (Ollama)")
+        if st.session_state.get("agent_helper") is not None:
+            display_agent_messages()
+            st.text_input("Ask Agent", key="agent_user_input", on_change=process_agent_input)
+        else:
+            err = st.session_state.get("agent_init_error", "Loading smolagents & litellm...")
+            st.info(f"Agent Status: {err}")
 
 
 if __name__ == "__main__":
