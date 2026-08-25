@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from .core import AgentCore
 from .tools import doc_manager
 from .profile import AgentProfile
+from .config import OLLAMA_MODEL, OLLAMA_BASE_URL, REDIS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +22,15 @@ class AgenticRAGHelper:
 
     def __init__(
         self,
-        model_name: str = "glm-5.2:cloud",
-        base_url: str = "http://127.0.0.1:11434",
-        redis_url: str = "redis://localhost:6379",
+        model_name: Optional[str] = None,
+        base_url: Optional[str] = None,
+        redis_url: Optional[str] = None,
         system_prompt: Optional[str] = None,
     ):
-        self.model_name = model_name
-        self.base_url = base_url
-        self.redis_url = redis_url
+        self.model_name = model_name or OLLAMA_MODEL
+        self.base_url = base_url or OLLAMA_BASE_URL
+        self.redis_url = redis_url or REDIS_URL
+
         
         self.profile = AgentProfile(system_prompt=system_prompt)
         self.core = AgentCore(

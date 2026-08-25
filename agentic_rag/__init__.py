@@ -12,8 +12,10 @@ from .observation import ObservationProcessor
 from .orchestration import AgentOrchestrator
 from .engineering.observability import ObservabilityManager
 from .engineering.guardrails import GuardrailManager
+from . import config
 
 __all__ = [
+    "config",
     "AgenticRAGHelper",
     "AgentCore",
     "AgentProfile",

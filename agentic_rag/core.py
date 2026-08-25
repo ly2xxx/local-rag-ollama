@@ -13,6 +13,7 @@ from langgraph.prebuilt import create_react_agent
 from .profile import AgentProfile
 from .tools import get_default_tools, doc_manager
 from .memory.short_term import ShortTermMemoryManager
+from .config import OLLAMA_MODEL, OLLAMA_BASE_URL, REDIS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +23,17 @@ class AgentCore:
 
     def __init__(
         self,
-        model_name: str = "glm-5.2:cloud",
-        base_url: str = "http://127.0.0.1:11434",
-        redis_url: str = "redis://localhost:6379",
+        model_name: Optional[str] = None,
+        base_url: Optional[str] = None,
+        redis_url: Optional[str] = None,
         profile: Optional[AgentProfile] = None,
         custom_tools: Optional[List[Any]] = None,
     ):
-        self.model_name = model_name
-        self.base_url = base_url
+        self.model_name = model_name or OLLAMA_MODEL
+        self.base_url = base_url or OLLAMA_BASE_URL
+        self.redis_url = redis_url or REDIS_URL
         self.profile = profile or AgentProfile()
-        self.memory_manager = ShortTermMemoryManager(redis_url=redis_url)
+        self.memory_manager = ShortTermMemoryManager(redis_url=self.redis_url)
         
         # Initialize Ollama model
         self.llm = ChatOllama(

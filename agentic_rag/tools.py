@@ -17,13 +17,14 @@ from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import pypdf
+from .config import EMBEDDING_MODEL
 
 
 class DocumentRetrieverManager:
     """Manages the in-memory/persisted Chroma vector store and document chunks."""
 
-    def __init__(self, embedding_model_name: str = "all-MiniLM-L6-v2"):
-        self.embedding_model_name = embedding_model_name
+    def __init__(self, embedding_model_name: Optional[str] = None):
+        self.embedding_model_name = embedding_model_name or EMBEDDING_MODEL
         self.embeddings = HuggingFaceEmbeddings(model_name=self.embedding_model_name)
         self.text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=100)
         self.vector_store: Optional[Chroma] = None

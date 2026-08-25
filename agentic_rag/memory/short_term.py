@@ -10,6 +10,7 @@ import logging
 from typing import Tuple, Any, Optional, Dict, List
 import redis
 from langgraph.checkpoint.memory import MemorySaver
+from ..config import REDIS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +29,8 @@ except ImportError:
 class ShortTermMemoryManager:
     """Manages short-term state persistence and checkpointers for LangGraph agents."""
 
-    def __init__(self, redis_url: str = "redis://localhost:6379"):
-        self.redis_url = redis_url
+    def __init__(self, redis_url: Optional[str] = None):
+        self.redis_url = redis_url or REDIS_URL
         self.checkpointer, self.is_redis_active, self.status_message = self._init_checkpointer()
 
     def _init_checkpointer(self) -> Tuple[Any, bool, str]:

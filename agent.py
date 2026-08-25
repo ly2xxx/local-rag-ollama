@@ -3,7 +3,10 @@
 import os
 import pypdf
 import litellm
+from dotenv import load_dotenv
 from smolagents import CodeAgent, LiteLLMModel, ToolCallingAgent, tool
+
+load_dotenv()
 
 
 @tool
@@ -56,12 +59,14 @@ def read_file(file_path: str) -> str:
 class SmolAgentHelper:
     def __init__(
         self,
-        model_id: str = "ollama/glm-5.2:cloud",
-        api_base: str = "http://127.0.0.1:11434",
+        model_id: str = None,
+        api_base: str = None,
         add_base_tools: bool = False,
     ):
-        self.model_id = model_id
-        self.api_base = api_base
+        raw_model = os.getenv("OLLAMA_MODEL", "glm-5.2:cloud")
+        default_model_id = f"ollama/{raw_model}" if not raw_model.startswith("ollama/") else raw_model
+        self.model_id = model_id or default_model_id
+        self.api_base = api_base or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
         self.add_base_tools = add_base_tools
 
         self.model = LiteLLMModel(

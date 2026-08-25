@@ -1,6 +1,9 @@
+import os
 from operator import itemgetter
-
 import joblib
+from dotenv import load_dotenv
+
+load_dotenv()
 
 try:
     from langchain.memory import ConversationBufferMemory
@@ -23,9 +26,12 @@ class ChatPDF:
     retriever = None
     chain = None
 
-    def __init__(self):
+    def __init__(self, model_name: str = None, base_url: str = None):
+        self.model_name = model_name or os.getenv("OLLAMA_MODEL", "glm-5.2:cloud")
+        self.base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+        self.embedding_model = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
         self.model = ChatOllama(
-            model="glm-5.2:cloud", base_url="http://127.0.0.1:11434"
+            model=self.model_name, base_url=self.base_url
         )
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1024, chunk_overlap=100
@@ -49,7 +55,7 @@ class ChatPDF:
         chunks = self.text_splitter.split_documents(docs)
         chunks = filter_complex_metadata(chunks)
 
-        modelPath = "all-MiniLM-L6-v2"
+        modelPath = self.embedding_model
         embeddings = HuggingFaceEmbeddings(model_name=modelPath)
         vector_store = Chroma.from_documents(documents=chunks, embedding=embeddings)
         self.retriever = vector_store.as_retriever(
