@@ -12,6 +12,7 @@ from .observation import ObservationProcessor
 from .orchestration import AgentOrchestrator
 from .engineering.observability import ObservabilityManager
 from .engineering.guardrails import GuardrailManager
+from .graph_display import render_agentic_rag_graph, get_graph_mermaid
 from . import config
 
 __all__ = [
@@ -30,4 +31,6 @@ __all__ = [
     "AgentOrchestrator",
     "ObservabilityManager",
     "GuardrailManager",
+    "render_agentic_rag_graph",
+    "get_graph_mermaid",
 ]

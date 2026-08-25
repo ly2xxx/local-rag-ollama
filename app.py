@@ -12,9 +12,10 @@ except ImportError:
 
 try:
     import agentic_rag
-    from agentic_rag import AgenticRAGHelper
+    from agentic_rag import AgenticRAGHelper, render_agentic_rag_graph
 except ImportError:
     AgenticRAGHelper = None
+    render_agentic_rag_graph = None
 
 st.set_page_config(page_title="Local RAG, SmolAgent & Agentic RAG", layout="wide")
 
@@ -233,6 +234,14 @@ def page():
                 st.success(f"🟢 **Redis Checkpointer Active**: {redis_status['url']} (Multi-turn state & scratchpads persisted)")
             else:
                 st.warning(f"🟡 **In-Memory Checkpointer Fallback**: Redis not reachable at `{redis_status['url']}`. Start Docker Redis to enable persistent checkpointer storage.")
+
+        # Visual Graph Topology Display (Matching langgraph_ollama style)
+        if st.session_state.get("agentic_rag_helper") and render_agentic_rag_graph is not None:
+            with st.expander("🗺️ Agentic RAG LangGraph Topology & Flow", expanded=False):
+                render_agentic_rag_graph(
+                    st.session_state["agentic_rag_helper"].core.graph,
+                    caption="LangGraph ReAct Topology: __start__ ➔ agent (Ollama LLM) ⇄ tools (RAG / Files / Math) ➔ __end__"
+                )
 
         col1, col2 = st.columns([3, 1])
         with col1:
