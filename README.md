@@ -8,11 +8,20 @@ Build and explore local RAG and AI Agent architectures locally using LangChain, 
 
 1. **RAG (Classic)**: Standard document retrieval chain with `HuggingFaceEmbeddings` + `Chroma` + `ChatOllama` (`glm-5.2:cloud`).
 2. **AGENT (SmolAgent)**: Dynamic routing between `CodeAgent` and `ToolCallingAgent` via LiteLLM & Ollama.
-3. **Agentic RAG (LangGraph + Redis Checkpointer)**: Implements the **3. Complete Agent Architecture** pattern from `Agent.md` featuring:
+3. **Agentic RAG (LangGraph + Redis Checkpointer + Live LLM Judge)**: Implements the **3. Complete Agent Architecture** pattern from `Agent.md` featuring:
    - **AgentCore**: ReAct loop (`Thought -> Action -> Observation`) with LangGraph.
    - **4. Tools**: Document knowledge base retrieval (`query_document_knowledge_base`), local file inspection (`read_local_file`), and mathematical calculation (`calculate_expression`).
    - **3. Short-term Memory**: Multi-turn conversation persistence & agent scratchpads backed by **Redis Checkpointer** (`RedisSaver` / `AsyncRedisSaver`), with in-memory fallback.
-   - **Modular Placeholders**: Profiles, Planning, Long-term memory, Actions, Observations, Orchestration, Observability, and Guardrails under `agentic_rag/`.
+   - **Engineering Essentials (Live Evaluation & Drift Detection)**:
+     - **Tier 1**: Instant heuristic quality and length sanitization.
+     - **Tier 2**: On-demand / live **LLM-as-a-Judge** scoring (Faithfulness & Answer Relevancy) via `OllamaJudge`.
+     - **Tier 3**: Continuous **Sliding Window Model Drift Detection** comparing rolling score distributions against pre-deployment CI/CD baselines (`baseline_metrics.json`).
+
+---
+
+## 📸 Agentic RAG Live Evaluation & Drift Monitoring in Action
+
+![Agentic RAG Live LLM-Judge & Drift Monitoring](assets/agentic_rag_live_eval_drift.png)
 
 ---
 
