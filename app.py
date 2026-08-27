@@ -246,12 +246,19 @@ def page():
     if "agentic_rag_helper" not in st.session_state:
         st.session_state["agentic_rag_helper"] = AgenticRAGHelper() if AgenticRAGHelper is not None else None
 
-    # Initialize Evaluation Manager with Judge and Baselines
+    # Initialize Evaluation Manager with Judge and Baselines from CI/CD artifact
     if "eval_manager" not in st.session_state and EvaluationManager is not None:
         judge = OllamaJudge() if OllamaJudge is not None else None
         eval_mgr = EvaluationManager(judge=judge, drift_window_size=50, drift_threshold=0.15)
-        eval_mgr.set_baseline("faithfulness", [0.90, 0.95, 0.92, 0.88, 0.94, 0.91, 0.90, 0.93, 0.95, 0.90])
-        eval_mgr.set_baseline("answer_relevancy", [0.90, 0.92, 0.88, 0.95, 0.91, 0.89, 0.93, 0.90, 0.92, 0.94])
+        
+        # Load pre-deployment baseline from CI/CD artifact
+        baseline_file = os.path.join(os.path.dirname(__file__), "agentic_rag", "engineering", "baseline_metrics.json")
+        loaded = eval_mgr.load_baseline_from_file(baseline_file)
+        if not loaded:
+            # Fallback baseline if artifact is missing
+            eval_mgr.set_baseline("faithfulness", [0.90, 0.95, 0.92, 0.88, 0.94, 0.91, 0.90, 0.93, 0.95, 0.92])
+            eval_mgr.set_baseline("answer_relevancy", [0.90, 0.92, 0.88, 0.95, 0.91, 0.89, 0.93, 0.90, 0.92, 0.94])
+            
         st.session_state["eval_manager"] = eval_mgr
 
     st.header("Local RAG & AI Agent Architectures")

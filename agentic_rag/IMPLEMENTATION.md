@@ -125,3 +125,77 @@ docker run -d --name local-redis -p 6379:6379 redis:alpine
 # Or Redis Stack with RedisInsight UI on port 8001
 docker run -d --name redis-stack -p 6379:6379 -p 8001:8001 redis/redis-stack:latest
 ```
+
+---
+
+## 6. CI/CD Baseline Collection & Quality Gate (GitHub Actions)
+
+In production LLMOps, the baseline distributions used for live model drift detection **must never be hardcoded in application code**. Instead, baselines are generated deterministically in pre-deployment CI/CD pipelines by running a curated **Golden Test Dataset** through LLM-as-a-Judge and saving the resulting artifact to [`baseline_metrics.json`](agentic_rag/engineering/baseline_metrics.json).
+
+### A. CI/CD Pre-Deployment Flow
+
+```mermaid
+flowchart LR
+    subgraph CI_Pipeline ["GitHub Actions CI Pipeline"]
+        Push["1. Git Push / PR"] --> StartOllama["2. Start Ollama Service / API"]
+        StartOllama --> RunEval["3. Run Golden Dataset Benchmark<br/>(scripts/run_ci_eval.py)"]
+        RunEval --> CheckGate{"4. Mean Score >= 0.85 &<br/>No Regressions?"}
+        CheckGate -- Fail --> Block["❌ Fail CI & Block Merge"]
+        CheckGate -- Pass --> ExportArtifact["5. Export baseline_metrics.json"]
+        ExportArtifact --> Deploy["6. Deploy Container to Production"]
+    end
+
+    subgraph Runtime_Deployment ["Live Production Application"]
+        Deploy --> Streamlit["Streamlit app.py"]
+        ExportArtifact -.->|Loaded on App Boot| EvalMgr["EvaluationManager<br/>(Live Drift Detection)"]
+    end
+```
+
+### B. Example GitHub Actions Workflow (`.github/workflows/eval-gate.yml`)
+
+```yaml
+name: Agentic RAG Evaluation & Baseline Gate
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  evaluate-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv & Python
+        uses: astral-sh/setup-uv@v2
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: uv sync
+
+      - name: Launch Background Ollama Runner
+        run: |
+          docker run -d --name ollama-ci -p 11434:11434 ollama/ollama:latest
+          sleep 5
+          docker exec ollama-ci ollama pull glm-5.2:cloud || true
+
+      - name: Run Golden Benchmark & Export Baseline Artifact
+        env:
+          OLLAMA_BASE_URL: "http://localhost:11434/v1"
+        run: |
+          uv run python -m agentic_rag.engineering.evaluation
+
+      - name: Upload Baseline Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-metrics
+          path: agentic_rag/engineering/baseline_metrics.json
+          retention-days: 30
+```
+
+### C. Runtime Artifact Ingestion
+When [`app.py`](app.py) boots up in staging or production, it calls `eval_mgr.load_baseline_from_file("agentic_rag/engineering/baseline_metrics.json")`. The live conversation turns are then compared against the exact benchmark distribution captured during the successful CI/CD release.

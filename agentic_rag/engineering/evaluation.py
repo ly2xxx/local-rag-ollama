@@ -75,6 +75,56 @@ class EvaluationManager:
                 f"Set baseline for {metric_name}: mean={statistics.mean(scores):.3f} (n={len(scores)})"
             )
 
+    def load_baseline_from_file(self, file_path: str) -> bool:
+        """Loads baseline distributions from a CI/CD-generated JSON artifact."""
+        import os
+        import json
+        if not os.path.exists(file_path):
+            logger.warning(f"Baseline file {file_path} not found.")
+            return False
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            metrics = data.get("metrics", {})
+            for m_name, m_info in metrics.items():
+                scores = m_info.get("scores", [])
+                if scores:
+                    self.set_baseline(m_name, scores)
+            logger.info(f"Successfully loaded baselines from {file_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error loading baseline file {file_path}: {e}")
+            return False
+
+    def save_baseline_to_file(
+        self,
+        file_path: str,
+        model_name: str = "glm-5.2:cloud",
+        judge_model: str = "OllamaJudge",
+        git_commit: str = "local-run",
+    ) -> None:
+        """Exports current baseline scores to a JSON artifact for CI/CD publication."""
+        import json
+        import datetime
+        metrics_dict = {}
+        for m_name, scores in self.baseline_scores.items():
+            metrics_dict[m_name] = {
+                "mean": round(statistics.mean(scores), 3) if scores else 0.0,
+                "sample_size": len(scores),
+                "scores": scores,
+            }
+        payload = {
+            "version": "1.0.0",
+            "model_name": model_name,
+            "judge_model": judge_model,
+            "benchmark_date": datetime.datetime.utcnow().isoformat() + "Z",
+            "git_commit": git_commit,
+            "metrics": metrics_dict,
+        }
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        logger.info(f"Saved baseline metrics artifact to {file_path}")
+
     def record_score(self, eval_score: EvaluationScore) -> None:
         """Records an evaluation score into history and updates the rolling drift window."""
         self.evaluation_history.append(eval_score)
