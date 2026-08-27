@@ -318,14 +318,34 @@ class EvaluationManager:
         return 0.85  # Default fallback score when positive verdict without explicit float
 
 
-# uv run python -m agentic_rag.engineering.evaluation
+# uv run python -m agentic_rag.engineering.evaluation [--update-baseline]
 if __name__ == "__main__":
+    import os
     import sys
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Agentic RAG Evaluation & Baseline Suite")
+    parser.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="Export newly computed benchmark evaluation scores to baseline_metrics.json",
+    )
+    args, unknown = parser.parse_known_args()
+
     print("=" * 65)
     print(" 🚀 AGENTIC RAG EVALUATION & DRIFT DETECTION SUITE")
     print("=" * 65)
 
     eval_manager = EvaluationManager()
+    baseline_path = os.path.join(os.path.dirname(__file__), "baseline_metrics.json")
+    
+    # Load existing baseline artifact if present
+    if os.path.exists(baseline_path):
+        eval_manager.load_baseline_from_file(baseline_path)
+        print(f"📁 Loaded baseline artifact from: {baseline_path}")
+    else:
+        # Fallback default baseline
+        eval_manager.set_baseline("faithfulness", [0.90, 0.95, 0.92, 0.88, 0.94, 0.91, 0.90, 0.93, 0.95, 0.92])
 
     # 1. Tier 1: Fast Heuristic Quality Check
     print("\n--- [Tier 1] Fast Heuristic Evaluation ---")
@@ -360,7 +380,6 @@ if __name__ == "__main__":
 
     # 3. Tier 3: Baseline Drift Detection & Golden Dataset
     print("\n--- [Tier 3] Sliding Window Drift Detection ---")
-    eval_manager.set_baseline("faithfulness", [0.90, 0.95, 0.92, 0.88, 0.94, 0.91, 0.90, 0.93, 0.95, 0.90])
     
     # Simulate a drift scenario (lower scores over recent turns)
     print("Simulating recent degraded turns (0.60, 0.55, 0.65, 0.50, 0.62)...")
@@ -379,4 +398,16 @@ if __name__ == "__main__":
     print(f" - Drift Delta:   {drift_report.drift_delta} (Threshold: {drift_report.threshold})")
     print(f" - Is Drifted:    {'🚨 YES' if drift_report.is_drifted else '✅ NO'}")
     print(f" - Details:       {drift_report.details}")
+
+    # 4. Optional: Update Baseline Artifact on disk (Used in CI/CD)
+    if args.update_baseline:
+        print("\n--- [CI/CD Export] Updating baseline_metrics.json ---")
+        eval_manager.save_baseline_to_file(
+            file_path=baseline_path,
+            model_name="glm-5.2:cloud",
+            judge_model="OllamaJudge(glm-5.2:cloud)",
+            git_commit=os.getenv("GITHUB_SHA", "manual-cli-run"),
+        )
+        print(f"✅ Successfully wrote updated baseline artifact to {baseline_path}")
+
     print("=" * 65)

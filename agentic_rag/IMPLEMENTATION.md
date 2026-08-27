@@ -186,8 +186,9 @@ jobs:
       - name: Run Golden Benchmark & Export Baseline Artifact
         env:
           OLLAMA_BASE_URL: "http://localhost:11434/v1"
+          GITHUB_SHA: ${{ github.sha }}
         run: |
-          uv run python -m agentic_rag.engineering.evaluation
+          uv run python -m agentic_rag.engineering.evaluation --update-baseline
 
       - name: Upload Baseline Artifact
         uses: actions/upload-artifact@v4
@@ -197,5 +198,12 @@ jobs:
           retention-days: 30
 ```
 
-### C. Runtime Artifact Ingestion
+### C. CLI Command Reference
+
+| Command | Purpose |
+| :--- | :--- |
+| `uv run python -m agentic_rag.engineering.evaluation` | **Read-only validation**: Tests drift and RAG scores against existing `baseline_metrics.json` without modifying disk. |
+| `uv run python -m agentic_rag.engineering.evaluation --update-baseline` | **Baseline Export (CI/CD)**: Runs evaluation and updates/overwrites [`agentic_rag/engineering/baseline_metrics.json`](agentic_rag/engineering/baseline_metrics.json). |
+
+### D. Runtime Artifact Ingestion
 When [`app.py`](app.py) boots up in staging or production, it calls `eval_mgr.load_baseline_from_file("agentic_rag/engineering/baseline_metrics.json")`. The live conversation turns are then compared against the exact benchmark distribution captured during the successful CI/CD release.
