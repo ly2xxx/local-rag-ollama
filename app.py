@@ -12,10 +12,21 @@ except ImportError:
 
 try:
     import agentic_rag
-    from agentic_rag import AgenticRAGHelper, render_agentic_rag_graph
+    from agentic_rag import (
+        AgenticRAGHelper,
+        render_agentic_rag_graph,
+        EvaluationManager,
+        EvaluationScore,
+        DriftReport,
+    )
+    from agentic_rag.judge.ollama_judge import OllamaJudge
 except ImportError:
     AgenticRAGHelper = None
     render_agentic_rag_graph = None
+    EvaluationManager = None
+    EvaluationScore = None
+    DriftReport = None
+    OllamaJudge = None
 
 st.set_page_config(page_title="Local RAG, SmolAgent & Agentic RAG", layout="wide")
 
@@ -123,10 +134,34 @@ def process_agentic_rag_input():
         with st.session_state["agentic_thinking_spinner"], st.spinner("Agentic RAG Core Reasoning (Thought -> Action -> Observation)..."):
             res = st.session_state["agentic_rag_helper"].ask(user_text, thread_id=thread_id)
 
+        eval_data = None
+        if st.session_state.get("enable_live_eval", True) and st.session_state.get("eval_manager"):
+            with st.spinner("Evaluating Response Quality with LLM Judge (Tier 2 & 3)..."):
+                eval_mgr = st.session_state["eval_manager"]
+                # Extract retrieved contexts from scratchpad tool observations
+                retrieved_contexts = [
+                    str(obs.get("content", ""))
+                    for obs in res.get("scratchpad", [])
+                    if obs.get("type") == "tool_observation" and "query_document" in obs.get("name", "")
+                ]
+                scores = eval_mgr.evaluate_response_quality(
+                    query=user_text,
+                    response=res.get("answer", ""),
+                    retrieved_contexts=retrieved_contexts if retrieved_contexts else None,
+                )
+                faith_drift = eval_mgr.check_drift("faithfulness")
+                relev_drift = eval_mgr.check_drift("answer_relevancy")
+                eval_data = {
+                    "scores": scores,
+                    "faith_drift": faith_drift,
+                    "relev_drift": relev_drift,
+                }
+
         st.session_state["agentic_messages"].append({
             "user": user_text,
             "assistant": res.get("answer", "No response"),
             "scratchpad": res.get("scratchpad", []),
+            "eval_data": eval_data,
         })
 
 
@@ -136,17 +171,51 @@ def display_agentic_rag_messages():
         message(msg_dict["user"], is_user=True, key=f"agentic_u_{i}")
         message(msg_dict["assistant"], is_user=False, key=f"agentic_a_{i}")
         
-        # Display Agent Scratchpad (Thought -> Action -> Observation)
+        # Display Agent Scratchpad & Live Evaluation Scores
         scratchpad = msg_dict.get("scratchpad", [])
-        if scratchpad:
-            with st.expander(f"🔍 Inspect Scratchpad & Tool Executions (Step {i+1})", expanded=False):
-                for item in scratchpad:
-                    if item.get("type") == "tool_call":
-                        st.markdown(f"**🛠️ Tool Call:** `{item.get('name')}`")
-                        st.json(item.get("args"))
-                    elif item.get("type") == "tool_observation":
-                        st.markdown(f"**👁️ Observation ({item.get('name')}):**")
-                        st.code(str(item.get("content")), language="markdown")
+        eval_data = msg_dict.get("eval_data")
+        
+        if scratchpad or eval_data:
+            with st.expander(f"🔍 Inspect Scratchpad, Tool Executions & Eval Scores (Step {i+1})", expanded=False):
+                if eval_data:
+                    st.markdown("#### 📊 Live LLM-as-a-Judge Quality Scores (Tier 2)")
+                    scores = eval_data.get("scores", [])
+                    if scores:
+                        score_cols = st.columns(len(scores))
+                        for idx, s in enumerate(scores):
+                            with score_cols[idx]:
+                                status_badge = "🟢 Passed" if s.passed else "🔴 Flagged"
+                                st.metric(
+                                    label=f"{s.metric_name.replace('_', ' ').title()} ({status_badge})",
+                                    value=f"{s.score:.2f} / 1.00",
+                                )
+                                if s.reasoning:
+                                    st.caption(f"**Judge Reasoning:** {s.reasoning}")
+                    
+                    st.markdown("---")
+                    st.markdown("#### 📈 Live Model Drift Status (Tier 3 Sliding Window N=50)")
+                    d_cols = st.columns(2)
+                    with d_cols[0]:
+                        fd = eval_data.get("faith_drift")
+                        if fd:
+                            icon = "🚨 DRIFT DETECTED" if fd.is_drifted else "✅ STABLE"
+                            st.write(f"**Faithfulness:** `{icon}` (Rolling Mean: `{fd.current_mean:.2f}` vs Baseline: `{fd.baseline_mean:.2f}`)")
+                    with d_cols[1]:
+                        rd = eval_data.get("relev_drift")
+                        if rd:
+                            icon = "🚨 DRIFT DETECTED" if rd.is_drifted else "✅ STABLE"
+                            st.write(f"**Relevancy:** `{icon}` (Rolling Mean: `{rd.current_mean:.2f}` vs Baseline: `{rd.baseline_mean:.2f}`)")
+                    st.markdown("---")
+
+                if scratchpad:
+                    st.markdown("#### 🛠️ Agent Reasoning Trajectory & Tools")
+                    for item in scratchpad:
+                        if item.get("type") == "tool_call":
+                            st.markdown(f"**🛠️ Tool Call:** `{item.get('name')}`")
+                            st.json(item.get("args"))
+                        elif item.get("type") == "tool_observation":
+                            st.markdown(f"**👁️ Observation ({item.get('name')}):**")
+                            st.code(str(item.get("content")), language="markdown")
 
     st.session_state["agentic_thinking_spinner"] = st.empty()
 
@@ -176,6 +245,14 @@ def page():
 
     if "agentic_rag_helper" not in st.session_state:
         st.session_state["agentic_rag_helper"] = AgenticRAGHelper() if AgenticRAGHelper is not None else None
+
+    # Initialize Evaluation Manager with Judge and Baselines
+    if "eval_manager" not in st.session_state and EvaluationManager is not None:
+        judge = OllamaJudge() if OllamaJudge is not None else None
+        eval_mgr = EvaluationManager(judge=judge, drift_window_size=50, drift_threshold=0.15)
+        eval_mgr.set_baseline("faithfulness", [0.90, 0.95, 0.92, 0.88, 0.94, 0.91, 0.90, 0.93, 0.95, 0.90])
+        eval_mgr.set_baseline("answer_relevancy", [0.90, 0.92, 0.88, 0.95, 0.91, 0.89, 0.93, 0.90, 0.92, 0.94])
+        st.session_state["eval_manager"] = eval_mgr
 
     st.header("Local RAG & AI Agent Architectures")
 
@@ -234,6 +311,19 @@ def page():
                 st.success(f"🟢 **Redis Checkpointer Active**: {redis_status['url']} (Multi-turn state & scratchpads persisted)")
             else:
                 st.warning(f"🟡 **In-Memory Checkpointer Fallback**: Redis not reachable at `{redis_status['url']}`. Start Docker Redis to enable persistent checkpointer storage.")
+
+        # Live Evaluation & Drift Monitoring Controls
+        eval_col1, eval_col2 = st.columns([3, 1])
+        with eval_col1:
+            st.session_state["enable_live_eval"] = st.toggle(
+                "🧪 Enable Live LLM-as-a-Judge & Model Drift Detection (Tier 2 & 3)",
+                value=st.session_state.get("enable_live_eval", True),
+                help="Uses OllamaJudge to evaluate faithfulness, answer relevancy, and track statistical model drift live during chat.",
+            )
+        with eval_col2:
+            if st.session_state.get("eval_manager"):
+                eval_cnt = len(st.session_state["eval_manager"].evaluation_history)
+                st.caption(f"📊 Evaluated Turns: **{eval_cnt}**")
 
         # Visual Graph Topology Display (Matching langgraph_ollama style)
         if st.session_state.get("agentic_rag_helper") and render_agentic_rag_graph is not None:
