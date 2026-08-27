@@ -27,6 +27,7 @@ flowchart TD
     subgraph EngineeringEssentials ["Engineering Essentials"]
         Obs["🔭 Observability<br/>(agentic_rag/engineering/observability.py)"]
         Guard["🛡️ Guardrails<br/>(agentic_rag/engineering/guardrails.py)"]
+        Eval["📊 Evaluation & Drift<br/>(agentic_rag/engineering/evaluation.py)"]
     end
     EngineeringEssentials -.-> CoreAgent
 ```
@@ -51,10 +52,13 @@ local-rag-ollama/
 │   ├── action.py                       # [PLACEHOLDER] 5. Action (Outbound dispatch & formatting)
 │   ├── observation.py                  # [PLACEHOLDER] 6. Observation (Feedback parsing & reflection)
 │   ├── orchestration.py                # [PLACEHOLDER] 7. Orchestration (Multi-agent supervisor graphs)
+│   ├── judge/
+│   │   └── ollama_judge.py             # [IMPLEMENTED] DeepEval LLM-as-a-Judge backed by Ollama
 │   └── engineering/
 │       ├── __init__.py
-│       ├── observability.py            # [PLACEHOLDER] Observability (Step tracing & metrics)
-│       └── guardrails.py               # [PLACEHOLDER] Guardrails (Input/output safety & policies)
+│       ├── observability.py            # [IMPLEMENTED] Observability (Step tracing & metrics)
+│       ├── guardrails.py               # [IMPLEMENTED] Guardrails (Input/output safety & policies)
+│       └── evaluation.py               # [IMPLEMENTED] Evaluation & Drift Detection (Judge scoring, baseline drift)
 ├── app.py                              # Streamlit app with 3 tabs: RAG, AGENT, Agentic RAG
 ├── pyproject.toml                      # Updated with langgraph, langgraph-checkpoint-redis, redis
 ├── README.md                           # Updated with Docker Redis deployment guide
@@ -88,6 +92,14 @@ local-rag-ollama/
   - `ask(query, thread_id)`: Executes ReAct loop and extracts final answer + structured scratchpads.
   - `get_redis_status()`: Inspects Redis connection state for UI rendering.
   - `clear_documents()`: Resets knowledge base.
+
+### E. Engineering Essentials & Quality Evaluation (`agentic_rag/engineering/`)
+- **Observability** ([`observability.py`](agentic_rag/engineering/observability.py)): Traces step execution latencies, input/output structures, and trajectory breakdowns.
+- **Guardrails** ([`guardrails.py`](agentic_rag/engineering/guardrails.py)): Pre-flight input length/injection checks and post-flight response sanitation.
+- **Evaluation & Drift Detection** ([`evaluation.py`](agentic_rag/engineering/evaluation.py)):
+  - Plugs into [`OllamaJudge`](agentic_rag/judge/ollama_judge.py) for scoring RAG metrics (faithfulness, answer relevancy).
+  - Implements sliding-window statistical drift tracking against established benchmark baselines.
+  - Supports deterministic golden-dataset batch regression benchmarking.
 
 ---
 
