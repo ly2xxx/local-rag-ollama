@@ -112,13 +112,19 @@ def ingest_agentic_rag_files():
     if "agentic_rag_helper" not in st.session_state or st.session_state["agentic_rag_helper"] is None:
         st.session_state["agentic_rag_helper"] = AgenticRAGHelper()
 
+    thread_id = st.session_state.get("agentic_thread_id", "session_1")
+
     for file in st.session_state.get("agentic_file_uploader", []):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tf:
             tf.write(file.getbuffer())
             file_path = tf.name
 
         with st.session_state["agentic_ingestion_spinner"], st.spinner(f"Ingesting into Agentic RAG: {file.name}"):
-            res = st.session_state["agentic_rag_helper"].ingest_document(file_path)
+            # display_name keeps the real filename (the temp file has a random one),
+            # thread_id scopes the document to this session's knowledge base.
+            res = st.session_state["agentic_rag_helper"].ingest_document(
+                file_path, display_name=file.name, thread_id=thread_id
+            )
             st.toast(res)
         os.remove(file_path)
 
@@ -222,7 +228,8 @@ def display_agentic_rag_messages():
 
 def clear_agentic_state():
     if "agentic_rag_helper" in st.session_state and st.session_state["agentic_rag_helper"]:
-        st.session_state["agentic_rag_helper"].clear_documents()
+        thread_id = st.session_state.get("agentic_thread_id", "session_1")
+        st.session_state["agentic_rag_helper"].clear_documents(thread_id=thread_id)
     st.session_state["agentic_messages"] = []
     st.toast("Agentic RAG session and document knowledge base reset.")
 
@@ -358,9 +365,16 @@ def page():
             )
 
         if st.session_state.get("agentic_rag_helper"):
-            ingested = st.session_state["agentic_rag_helper"].get_ingested_files()
+            ingested = st.session_state["agentic_rag_helper"].get_ingested_files(
+                thread_id=st.session_state.get("agentic_thread_id", "session_1")
+            )
             if ingested:
                 st.caption(f"📚 **Ingested Knowledge Base Documents:** {', '.join(ingested)}")
+            else:
+                st.caption(
+                    "📚 No documents in this session's knowledge base yet. "
+                    "Each Session / Thread ID has its own isolated, persisted store."
+                )
 
         st.session_state["agentic_ingestion_spinner"] = st.empty()
 

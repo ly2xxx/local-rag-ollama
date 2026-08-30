@@ -6,7 +6,17 @@ from .profile import AgentProfile
 from .planning import Planner
 from .memory.short_term import ShortTermMemoryManager, get_redis_checkpointer
 from .memory.long_term import LongTermMemory
-from .tools import get_default_tools, doc_manager
+from .tools import (
+    get_default_tools,
+    doc_registry,
+    get_doc_manager,
+    use_namespace,
+    get_active_namespace,
+    DocumentRetrieverManager,
+    DocumentStoreRegistry,
+    safe_eval_expression,
+    UnsafeExpressionError,
+)
 from .action import ActionExecutor
 from .observation import ObservationProcessor
 from .orchestration import AgentOrchestrator
@@ -26,7 +36,14 @@ __all__ = [
     "get_redis_checkpointer",
     "LongTermMemory",
     "get_default_tools",
-    "doc_manager",
+    "doc_registry",
+    "get_doc_manager",
+    "use_namespace",
+    "get_active_namespace",
+    "DocumentRetrieverManager",
+    "DocumentStoreRegistry",
+    "safe_eval_expression",
+    "UnsafeExpressionError",
     "ActionExecutor",
     "ObservationProcessor",
     "AgentOrchestrator",

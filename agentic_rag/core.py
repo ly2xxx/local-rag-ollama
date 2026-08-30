@@ -11,7 +11,7 @@ from langchain_ollama import ChatOllama
 from langgraph.prebuilt import create_react_agent
 
 from .profile import AgentProfile
-from .tools import get_default_tools, doc_manager
+from .tools import get_default_tools, use_namespace
 from .memory.short_term import ShortTermMemoryManager
 from .config import OLLAMA_MODEL, OLLAMA_BASE_URL, REDIS_URL
 
@@ -71,11 +71,21 @@ class AgentCore:
             )
         return agent
 
-    def run(self, message: str, thread_id: str = "default_session") -> dict:
-        """Executes the agent for a user message within a thread session."""
+    def run(
+        self,
+        message: str,
+        thread_id: str = "default_session",
+        namespace: Optional[str] = None,
+    ) -> dict:
+        """Executes the agent for a user message within a thread session.
+
+        The knowledge-base namespace is bound to the execution context rather
+        than passed as a tool argument, so retrieval tools can only ever reach
+        the caller's own documents.
+        """
         config = self.memory_manager.get_thread_config(thread_id)
         input_payload = {"messages": [("user", message)]}
-        
+
         # Invoke LangGraph
-        result = self.graph.invoke(input_payload, config=config)
-        return result
+        with use_namespace(namespace or thread_id):
+            return self.graph.invoke(input_payload, config=config)

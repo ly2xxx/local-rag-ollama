@@ -10,11 +10,49 @@ from typing import List, Tuple, Dict, Any, Optional
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from .core import AgentCore
-from .tools import doc_manager
+from .tools import doc_registry
 from .profile import AgentProfile
-from .config import OLLAMA_MODEL, OLLAMA_BASE_URL, REDIS_URL
+from .config import OLLAMA_MODEL, OLLAMA_BASE_URL, REDIS_URL, DEFAULT_NAMESPACE
 
 logger = logging.getLogger(__name__)
+
+
+def _message_text(content: Any) -> str:
+    """Flattens message content (a string, or a list of content blocks) to text."""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+        return "\n".join(part for part in parts if part).strip()
+    return ""
+
+
+def _extract_final_answer(messages: List[Any]) -> str:
+    """Returns the agent's final answer from a message trajectory.
+
+    Scans backwards for the last AI message that is *not* a tool-call request.
+    Scanning forwards would let reasoning text emitted alongside a tool call
+    overwrite the real answer.
+    """
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
+            text = _message_text(msg.content)
+            if text:
+                return text
+
+    # Fallback: a model that packs its answer into the same message as a tool call.
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage):
+            text = _message_text(msg.content)
+            if text:
+                return text
+
+    return "No response generated."
 
 
 class AgenticRAGHelper:
@@ -26,12 +64,15 @@ class AgenticRAGHelper:
         base_url: Optional[str] = None,
         redis_url: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        namespace: Optional[str] = None,
     ):
         self.model_name = model_name or OLLAMA_MODEL
         self.base_url = base_url or OLLAMA_BASE_URL
         self.redis_url = redis_url or REDIS_URL
+        # When set, pins every thread to one knowledge base. When left as None,
+        # each thread_id gets its own isolated knowledge base.
+        self.namespace = namespace
 
-        
         self.profile = AgentProfile(system_prompt=system_prompt)
         self.core = AgentCore(
             model_name=self.model_name,
@@ -40,17 +81,38 @@ class AgenticRAGHelper:
             profile=self.profile,
         )
 
-    def ingest_document(self, file_path: str) -> str:
-        """Ingests a PDF document into the RAG vector store."""
-        return doc_manager.ingest_pdf(file_path)
+    def _resolve_namespace(
+        self, namespace: Optional[str] = None, thread_id: Optional[str] = None
+    ) -> str:
+        return namespace or self.namespace or thread_id or DEFAULT_NAMESPACE
 
-    def get_ingested_files(self) -> List[str]:
-        """Returns the list of ingested document filenames."""
-        return list(doc_manager.ingested_files)
+    def ingest_document(
+        self,
+        file_path: str,
+        display_name: Optional[str] = None,
+        thread_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+    ) -> str:
+        """Ingests a PDF document into the knowledge base for this session.
 
-    def clear_documents(self):
-        """Clears the ingested document knowledge base."""
-        doc_manager.clear()
+        `display_name` preserves the original filename when the caller hands us
+        a temp file (as Streamlit's uploader does).
+        """
+        manager = doc_registry.get(self._resolve_namespace(namespace, thread_id))
+        return manager.ingest_pdf(file_path, display_name=display_name)
+
+    def get_ingested_files(
+        self, thread_id: Optional[str] = None, namespace: Optional[str] = None
+    ) -> List[str]:
+        """Returns the list of ingested document filenames for this session."""
+        manager = doc_registry.get(self._resolve_namespace(namespace, thread_id))
+        return list(manager.ingested_files)
+
+    def clear_documents(
+        self, thread_id: Optional[str] = None, namespace: Optional[str] = None
+    ):
+        """Clears the ingested document knowledge base for this session."""
+        doc_registry.get(self._resolve_namespace(namespace, thread_id)).clear()
 
     def get_redis_status(self) -> Dict[str, Any]:
         """Returns connection status details for the Redis memory checkpointer."""
@@ -60,7 +122,12 @@ class AgenticRAGHelper:
             "url": self.redis_url,
         }
 
-    def ask(self, query: str, thread_id: str = "default_session") -> Dict[str, Any]:
+    def ask(
+        self,
+        query: str,
+        thread_id: str = "default_session",
+        namespace: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Runs the ReAct agent on the query within a thread session.
 
         Returns a dictionary containing:
@@ -69,26 +136,25 @@ class AgenticRAGHelper:
         - 'messages': All message objects from the graph execution.
         """
         try:
-            result = self.core.run(message=query, thread_id=thread_id)
+            result = self.core.run(
+                message=query,
+                thread_id=thread_id,
+                namespace=self._resolve_namespace(namespace, thread_id),
+            )
             messages = result.get("messages", [])
-            
-            final_answer = "No response generated."
+
             scratchpad: List[Dict[str, Any]] = []
 
-            # Parse message trajectory for scratchpad and final answer
+            # Walk the trajectory forwards for the scratchpad (chronological order).
             for msg in messages:
                 if isinstance(msg, AIMessage):
-                    if msg.tool_calls:
-                        for tc in msg.tool_calls:
-                            scratchpad.append({
-                                "type": "tool_call",
-                                "name": tc.get("name"),
-                                "args": tc.get("args"),
-                                "id": tc.get("id"),
-                            })
-                    if msg.content and isinstance(msg.content, str) and msg.content.strip():
-                        # The latest non-empty AI content represents the answer (or intermediate reasoning)
-                        final_answer = msg.content.strip()
+                    for tc in getattr(msg, "tool_calls", None) or []:
+                        scratchpad.append({
+                            "type": "tool_call",
+                            "name": tc.get("name"),
+                            "args": tc.get("args"),
+                            "id": tc.get("id"),
+                        })
                 elif isinstance(msg, ToolMessage):
                     scratchpad.append({
                         "type": "tool_observation",
@@ -98,7 +164,7 @@ class AgenticRAGHelper:
                     })
 
             return {
-                "answer": final_answer,
+                "answer": _extract_final_answer(messages),
                 "scratchpad": scratchpad,
                 "messages": messages,
                 "success": True,
