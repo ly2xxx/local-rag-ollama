@@ -42,8 +42,14 @@ def real_store_app(tmp_path, monkeypatch):
     settings = Settings(
         _env_file=None,
         api_keys=f"{KEY_A}:tenant_a,{KEY_B}:tenant_b",
+        auth_enabled=True,
         warm_embeddings_on_startup=False,
     )
+    # Without auth there is exactly one tenant, and every isolation assertion
+    # below would be vacuous rather than wrong. Assert the premise.
+    assert settings.auth_enabled, "tenant isolation is meaningless with auth disabled"
+    assert len(settings.api_key_map) == 2
+
     service = AgenticRAGService(settings, helper=_RealDocsHelper())
     return create_app(settings=settings, service=service)
 

@@ -310,6 +310,15 @@ stays fast. CI adds `integration`. `eval` and `e2e` are opt-in jobs.
 2. LLM-dependent assertions use fakes. Real-LLM behaviour is asserted **statistically** in the
    `eval` layer against thresholds, never as exact string equality.
 3. Every integration test creates a uniquely-named collection/keyspace and tears it down.
+4. **The developer's `.env` must not reconfigure the suite.** `config.py` calls `load_dotenv()` at
+   import, which copies `.env` into `os.environ`, and `Settings(_env_file=None)` still reads
+   `os.environ` — so `_env_file=None` alone is *not* hermetic. An autouse fixture clears every
+   behaviour-changing setting (auth, tenancy, limits, SSE timing); upstream addresses
+   (`REDIS_URL`, `OLLAMA_*`) are left alone because integration tests must reach real services.
+   This is not hypothetical: a local `AUTH_ENABLED=false` collapsed every request onto the single
+   anonymous tenant and made a tenant-isolation test report a data leak against correct code.
+5. A test whose meaning depends on a setting must assert that setting. An isolation test with auth
+   disabled is vacuous, not passing.
 
 ### 6.4 Quality gates
 
@@ -458,6 +467,88 @@ tests/integration/test_lifespan.py
 - **Model capability probe.** Startup logs whether the configured model actually honours tool
   calls and structured output, so a silent capability downgrade is visible in the pod logs.
 
+### Scope: what this phase touches
+
+Roughly 70 % of Phase 2 is a new `agentic_rag/llm/` package. `core.py` gets **thinner, not
+fatter** — it stops constructing its own model — plus one new async streaming method.
+The LangGraph topology is untouched; `create_react_agent` stays until Phase 4.
+
+| File | Change |
+|---|---|
+| `llm/provider.py` | **New.** `get_chat_model(purpose)` factory, typed `LLMUnavailable` / `LLMTimeout` |
+| `llm/structured.py` | **New.** `with_structured_output` wrappers + one repair retry |
+| `core.py` | Inline `ChatOllama(...)` → `get_chat_model("chat")`; **adds** `astream()` beside `run()` |
+| `api/service.py` | Adds `astream()`; **deletes** `classify_agent_failure` in favour of typed exceptions |
+| `api/routes/chat.py` | `_stream_turn` body swapped to the real event stream — **wire format unchanged** |
+| `memory/short_term.py` | Hands out a checkpointer per calling context (see R2) |
+| `settings.py` | Per-purpose model config |
+
+> `create_react_agent` now emits `LangGraphDeprecatedSinceV10` — it has moved to
+> `langchain.agents.create_agent` and is removed in LangGraph V2. Phase 4's rewrite is therefore
+> on a clock, not merely desirable. Do not spend Phase 2 effort enriching `_build_graph()`.
+
+### Guardrails: keeping the Streamlit path alive
+
+Streamlit tab 3 does not use the API tier. It goes
+`AgenticRAGHelper.ask` → `AgentCore.run` → `graph.invoke`, entirely synchronously — through the
+exact code Phase 2 edits. These four decisions exist to keep it working.
+
+**Entry gate.** `tests/unit/test_agent_sync_path.py` (11 tests) and
+`tests/integration/test_agent_sync_path_redis.py` (3 tests) were added *before* any Phase 2 code
+and must stay green throughout. They drive a real `AgenticRAGHelper` against a scripted fake model
+and assert answers, tool observations, namespace binding, multi-turn checkpointing, and the exact
+scratchpad shape `app.py` renders. CI's `py_compile app.py` step proves only that the file parses
+and would catch none of R1–R3.
+
+**R1 · `config.py` stays until Phase 4 — D-6 is deferred.**
+`tools.py`, `core.py` and `agent.py` all import module-level constants from `config.py`; deleting
+them breaks Streamlit at import. `tests/unit/test_phase0_hardening.py` also monkeypatches
+`agentic_rag.tools.FILE_TOOL_ROOTS` directly, so turning it into a `Settings` lookup would make
+that test silently stop testing anything. `Settings` covers the API tier only; the fold happens in
+Phase 4 when `core.py` is being rewritten anyway and the churn is already paid for.
+*Enforced by* `test_legacy_config_constants_remain_importable` and
+`test_tools_module_keeps_patchable_module_level_settings`.
+
+**R2 · Hand out the checkpointer per calling context; never swap the default globally.**
+Measured against the installed `langgraph-checkpoint-redis`:
+
+| Saver | Sync `get_tuple`/`put`/`put_writes` | Sync `list` | Async methods |
+|---|---|---|---|
+| `RedisSaver` | ✅ | ✅ | ❌ → `BaseCheckpointSaver` raises `NotImplementedError` |
+| `AsyncRedisSaver` | ✅ | ❌ | ✅ |
+| `MemorySaver` | ✅ | ✅ | ✅ |
+
+The trap is that `MemorySaver` — the fallback when Redis is *down* — supports both. So an async
+path built on `RedisSaver` **works when Redis is unavailable and crashes when it is up**, and every
+hermetic test stays green. `ShortTermMemoryManager` therefore exposes `get_checkpointer()` (sync,
+`RedisSaver`) and `get_async_checkpointer()` (`AsyncRedisSaver`), and `AgentCore` compiles two
+graphs — `self.graph` for `run()`, `self.async_graph` for `astream()` — because a compiled
+LangGraph binds its checkpointer at compile time. Both must address the same `thread_id`, so a
+turn streamed asynchronously is visible to a later synchronous turn.
+*Enforced by* `tests/integration/test_async_checkpointer.py`, which must run **with Redis live**.
+
+**R3 · `get_chat_model()` returns a plain `BaseChatModel`.**
+Timeouts and retry go into the model's own constructor arguments, not a wrapper object. A wrapper
+that only implements the async surface would break `AgentCore.run`'s synchronous `.invoke()`.
+`AgentCore` also gains an optional `model=` injection parameter so tests inject a fake rather than
+monkeypatching a module attribute — which makes this guardrail enforceable rather than incidental.
+*Enforced by* `test_factory_returns_plain_base_chat_model` and the sync-path suite.
+
+**R4 · `OllamaJudge` takes its configuration from the provider, not its own defaults.**
+`judge/ollama_judge.py` hardcodes `model="glm-5.2:cloud"` and does not follow `OLLAMA_MODEL`, so
+changing that setting today silently leaves the judge on the old model — and the judge scores are
+rendered live in Streamlit tab 3. Routing it through the `judge` purpose fixes that.
+
+*Important constraint:* the judge talks to Ollama's **OpenAI-compatible `/v1` endpoint** via the
+`openai` SDK because DeepEval requires a `DeepEvalBaseLLM`, while the agent uses the native Ollama
+API. So `provider.py` owns the judge's **configuration** (model name, base URL, timeouts) and
+exposes `get_judge_model()`; it does **not** rewrite the judge onto a `BaseChatModel`. That
+rewrite is a bigger change with no Phase 2 payoff.
+
+Because this alters numbers the UI displays, record the judge's scores on a fixed sample before
+the switch and compare after. A movement is information, not automatically a regression — but it
+must be observed rather than discovered later.
+
 ### Definition of Done
 
 - [ ] First token reaches the browser in < 1.5 s on a warm path (measured, recorded)
@@ -468,6 +559,12 @@ tests/integration/test_lifespan.py
       cleanly, no hung request
 - [ ] Timeouts are enforced and configurable; no unbounded LLM call exists in the codebase
 - [ ] `done` event carries prompt/completion token counts and latency
+- [ ] **R1:** `config.py` constants still importable; Streamlit sync-path suite green
+- [ ] **R2:** sync turns use `RedisSaver`, async turns use `AsyncRedisSaver`, and a thread written
+      by one is readable by the other — asserted **with Redis running**
+- [ ] **R3:** `get_chat_model()` returns a `BaseChatModel` whose sync `.invoke()` works
+- [ ] **R4:** the judge follows `OLLAMA_MODEL`; before/after scores on a fixed sample recorded
+- [ ] `uv run streamlit run app.py` — tab 3 answers a question and renders its scratchpad
 
 ### Planned pytest
 
@@ -477,6 +574,16 @@ tests/unit/test_provider.py
     test_retry_stops_after_max_attempts
     test_connection_error_maps_to_llm_unavailable
     test_timeout_maps_to_llm_timeout
+    test_factory_returns_plain_base_chat_model            # R3
+    test_returned_model_supports_sync_invoke              # R3
+    test_timeouts_are_constructor_args_not_a_wrapper      # R3
+tests/unit/test_checkpointer_selection.py                 # R2
+    test_sync_context_gets_redissaver
+    test_async_context_gets_asyncredissaver
+    test_manager_default_is_unchanged_for_existing_callers
+tests/unit/test_judge_config.py                           # R4
+    test_judge_follows_the_ollama_model_setting
+    test_judge_still_targets_the_v1_openai_endpoint
 tests/unit/test_structured_output.py
     test_valid_payload_parses_to_model
     test_malformed_payload_triggers_single_repair_then_typed_failure
@@ -489,9 +596,21 @@ tests/contract/test_stream_token_order.py
     test_tokens_arrive_before_done
     test_citation_events_precede_the_tokens_that_cite_them
 
+tests/integration/test_async_checkpointer.py              # R2, needs Redis live
+    test_astream_completes_against_real_redis
+    test_async_turn_is_visible_to_a_later_sync_turn
+    test_sync_turn_is_visible_to_a_later_async_turn
+
 tests/eval/test_model_capabilities.py      # marker: eval, needs real Ollama
     test_model_emits_wellformed_tool_calls
     test_model_honours_structured_output_schema
+```
+
+Already in place as the phase's entry gate (must stay green):
+
+```
+tests/unit/test_agent_sync_path.py                 11 tests — the Streamlit path
+tests/integration/test_agent_sync_path_redis.py     3 tests — same path, real RedisSaver
 ```
 
 ### Risks
@@ -500,6 +619,10 @@ tests/eval/test_model_capabilities.py      # marker: eval, needs real Ollama
 |---|---|
 | The configured model handles tool calls unreliably | Capability probe at startup + an `eval`-marked test; documented fallback to prompt-based JSON extraction |
 | Client disconnect leaks an upstream generation | Cancellation test; `anyio` cancel scope around the stream |
+| Async path built on the sync `RedisSaver` — **passes without Redis, fails with it** | R2: separate sync/async checkpointers and graphs; the covering test only runs with Redis live |
+| Model factory wraps the model and breaks sync `.invoke()`, blanking Streamlit | R3: return a plain `BaseChatModel`; sync-path suite is the entry gate |
+| Early `config.py` fold breaks `tools`/`core`/`agent` at import | R1: D-6 deferred to Phase 4; importability pinned by test |
+| Judge rewrite changes tab 3's displayed scores unnoticed | R4: provider owns configuration only; before/after scores recorded on a fixed sample |
 
 ---
 

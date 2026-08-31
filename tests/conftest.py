@@ -32,6 +32,42 @@ def pytest_configure(config):
         config.addinivalue_line("markers", f"{marker}: {description}")
 
 
+# Settings fields whose value changes what a test *means*. `config.py` calls
+# load_dotenv() at import, which pushes the developer's .env into os.environ —
+# and `Settings(_env_file=None)` still reads os.environ, so `_env_file=None`
+# alone does NOT make settings hermetic. A local `AUTH_ENABLED=false` silently
+# collapsed every tenant to one, which made a tenant-isolation test "fail"
+# against perfectly correct code. These are cleared for every test; upstream
+# addresses (REDIS_URL, OLLAMA_*) are left alone because integration tests need
+# to reach the real services.
+_BEHAVIOURAL_ENV_VARS = (
+    "APP_NAME",
+    "APP_VERSION",
+    "ENVIRONMENT",
+    "API_KEYS",
+    "AUTH_ENABLED",
+    "DEFAULT_TENANT",
+    "MAX_UPLOAD_BYTES",
+    "MAX_QUERY_CHARS",
+    "REQUEST_TIMEOUT_SECONDS",
+    "SSE_HEARTBEAT_SECONDS",
+    "SSE_TOKEN_CHUNK_CHARS",
+    "SSE_OBSERVATION_PREVIEW_BYTES",
+    "READYZ_REQUIRE_REDIS",
+    "REDIS_PING_TIMEOUT_SECONDS",
+    "WARM_EMBEDDINGS_ON_STARTUP",
+    "CORS_ALLOW_ORIGINS",
+    "LOG_LEVEL",
+)
+
+
+@pytest.fixture(autouse=True)
+def hermetic_settings_env(monkeypatch):
+    """Stops the developer's .env from reconfiguring the suite."""
+    for name in _BEHAVIOURAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
 _REAL_CONNECT = socket.socket.connect
 _REAL_CONNECT_EX = socket.socket.connect_ex
 _REAL_CREATE_CONNECTION = socket.create_connection
