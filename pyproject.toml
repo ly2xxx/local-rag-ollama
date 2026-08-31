@@ -30,4 +30,56 @@ dependencies = [
     "langgraph-checkpoint-redis>=0.1.0",
     "redis>=5.0.0",
     "python-dotenv>=1.0.0",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.1",
+    "python-multipart>=0.0.32",
+    "pydantic-settings>=2.14.2",
+]
+
+[dependency-groups]
+dev = [
+    "fakeredis>=2.37.1",
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# Default run is the fast, hermetic inner loop. CI adds `-m integration`;
+# eval and e2e are opt-in jobs. See DESIGN.md §6.1.
+addopts = "-m 'unit or contract' --strict-markers --strict-config -q"
+markers = [
+    "unit: Pure logic; no I/O, no network.",
+    "contract: HTTP surface via ASGI transport; no real upstreams.",
+    "integration: Needs a real Redis / vector store.",
+    "eval: Needs a real LLM; slow. Opt-in.",
+    "e2e: Runs against a deployed cluster. Opt-in.",
+    "allow_network: Opts out of the outbound-connection guard.",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:pydantic.*",
+    "ignore::DeprecationWarning:httpx.*",
+]
+
+[tool.coverage.run]
+branch = true
+# Phase 1 scopes the gate to the tier it introduced. Widening this to the whole
+# package is tracked in PHASED.md; the legacy modules get covered as later
+# phases rewrite them.
+include = ["agentic_rag/api/*", "agentic_rag/settings.py"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
 ]

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit, contract & integration tests
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      REDIS_URL: redis://localhost:6379
+      # Hermetic tests must never reach a real model.
+      OLLAMA_BASE_URL: http://127.0.0.1:1
+      WARM_EMBEDDINGS_ON_STARTUP: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Fast suite (unit + contract)
+        run: uv run pytest -m "unit or contract" --cov --cov-report=term-missing
+
+      - name: Integration suite
+        run: uv run pytest -m integration -o addopts="" --cov --cov-append --cov-report=term-missing
+
+      - name: Coverage gate
+        run: uv run coverage report --fail-under=80
+
+      - name: OpenAPI contract is up to date
+        run: |
+          uv run python scripts/dump_openapi.py
+          git diff --exit-code tests/contract/openapi_snapshot.json \
+            || (echo "::error::OpenAPI snapshot is stale. Run 'uv run python scripts/dump_openapi.py' and commit the diff." && exit 1)
+
+      - name: Streamlit entrypoint still imports
+        run: uv run python -c "import py_compile; py_compile.compile('app.py', doraise=True)"
