@@ -37,12 +37,12 @@ uv sync
 
 The Agentic RAG tab automatically connects to Redis at `redis://localhost:6379`. If Redis is not running, it gracefully falls back to in-memory memory storage (`MemorySaver`).
 
-To enable persistent multi-turn Redis checkpointing, run Redis in Docker using one of the options below:
+To enable persistent multi-turn Redis checkpointing, run Redis Stack in Docker (required for `RedisJSON` / `JSON.SET` commands used by `langgraph-checkpoint-redis`):
 
-#### Option A: Lightweight Redis (Standard)
+#### Option A: Redis Stack Server (Lightweight)
 
 ```bash
-docker run -d --name local-redis -p 6379:6379 redis:alpine
+docker run -d --name local-redis -p 6379:6379 redis/redis-stack-server:latest
 ```
 
 #### Option B: Redis Stack (Includes RedisInsight Web UI on http://localhost:8001)
@@ -53,16 +53,17 @@ docker run -d --name redis-stack -p 6379:6379 -p 8001:8001 redis/redis-stack:lat
 
 #### Option C: Docker Compose
 
-Create or use a `docker-compose.yml`:
+Use `docker-compose.yml`:
 
 ```yaml
 version: '3.8'
 services:
   redis:
-    image: redis:alpine
-    container_name: local-redis
+    image: redis/redis-stack:latest
+    container_name: redis-stack
     ports:
       - "6379:6379"
+      - "8001:8001"
     restart: unless-stopped
 ```
 

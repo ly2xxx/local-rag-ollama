@@ -144,8 +144,8 @@ Tab 3 (**"Agentic RAG"**) provides:
 As documented in `README.md`, start a local Redis container with:
 
 ```bash
-# Standard lightweight Redis
-docker run -d --name local-redis -p 6379:6379 redis:alpine
+# Redis Stack Server (lightweight)
+docker run -d --name local-redis -p 6379:6379 redis/redis-stack-server:latest
 
 # Or Redis Stack with RedisInsight UI on port 8001
 docker run -d --name redis-stack -p 6379:6379 -p 8001:8001 redis/redis-stack:latest
