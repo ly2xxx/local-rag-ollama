@@ -107,6 +107,14 @@ def create_app(
     """Builds the app. Injecting `service` skips all real upstream construction."""
     settings = settings or get_settings()
 
+    # No handler is attached to the root logger otherwise, so INFO logs (and
+    # WARNING logs from suppressed exceptions, e.g. a failed Chroma delete)
+    # never reach the console — only uvicorn's own access/error loggers do.
+    logging.basicConfig(
+        level=settings.log_level.upper(),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if app.state.service is None:
