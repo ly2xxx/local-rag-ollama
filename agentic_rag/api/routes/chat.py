@@ -1,4 +1,18 @@
-"""Chat endpoints: buffered JSON and SSE streaming."""
+"""Chat endpoints: buffered JSON and SSE streaming.
+
+====================================================================================================
+SUMMARY COMPARISON: Buffered (/chat) vs. Streaming (/chat/stream)
+====================================================================================================
+| Feature / Concept   | Buffered Endpoint (/chat)            | Streaming Endpoint (/chat/stream)             |
+|---------------------|--------------------------------------|------------------------------------------------|
+| Return Type         | ChatResponse (application/json)      | StreamingResponse (text/event-stream)          |
+| Execution Model     | Single-shot `await`, builds and      | Async generator `yield`, pushes event sequence |
+|                     | returns full JSON once turn finishes | incrementally in real-time                     |
+| Error Handling      | Standard HTTP 4xx/500 JSON body      | In-stream `event: error` SSE frame (HTTP 200)  |
+| UX / Client Feel    | Wait spinner -> Instant bulk answer  | Typewriter effect + live thoughts/tool calls   |
+| Reverse Proxy Setup | Standard response headers            | Cache-Control: no-cache, X-Accel-Buffering: no |
+====================================================================================================
+"""
 
 import asyncio
 import logging
@@ -28,6 +42,10 @@ _ERROR_RESPONSES = {
 }
 
 
+# #### 1.5 - Defensive Parsing & Fault Tolerance
+# - Related Step: Step 1 (schemas.py) & Error Handling
+# - Core Concept: Unpack dictionary entries (**item) into Pydantic models with try-except,
+#   ensuring unparseable debug or trajectory entries do not crash the user's request.
 def _to_entries(
     scratchpad: Optional[Sequence[Dict[str, Any]]],
 ) -> List[ScratchpadEntry]:
@@ -40,23 +58,39 @@ def _to_entries(
     return entries
 
 
+# #### 1.1 - Route Decorator & API Contract Definition
+# - Related Step: Step 2 (main.py / routes) & Step 1 (schemas.py) & Step 3 (errors.py)
+# - Core Concept: Declare endpoint metadata, automatic response filtering (response_model=ChatResponse),
+#   and standardized error schemas for OpenAPI / Swagger documentation.
 @router.post(
     "/chat",
     response_model=ChatResponse,
     summary="Ask the agent (buffered)",
     responses=_ERROR_RESPONSES,
 )
+# #### 1.2 - Request Body Validation & Dependency Injection
+# - Related Step: Step 1 (schemas.py) & Step 3 (deps.py)
+# - Core Concept: Pydantic deserialization + validation on `payload`, and FastAPI `Depends`
+#   for authentication (Principal) and service injection (AgentService).
 async def chat(
     payload: ChatRequest,
     principal: Principal = Depends(get_principal),
     service: AgentService = Depends(get_service),
 ) -> ChatResponse:
     started = time.perf_counter()
+    # #### 1.3 - Asynchronous Non-blocking Invocation
+    # - Related Step: Step 2 (service.py) & Async/Await
+    # - Core Concept: Yields control back to the asyncio event loop while waiting for LLM / I/O,
+    #   preventing Worker threads from blocking concurrent requests.
     result = await service.ask(
         tenant_id=principal.tenant_id,
         thread_id=payload.thread_id,
         query=payload.query,
     )
+    # #### 1.4 - Response Construction & Distributed Tracing
+    # - Related Step: Step 1 (schemas.py) & Step 3 (middleware.py / tracing.py)
+    # - Core Concept: Pack result into Pydantic model with ContextVar-backed trace_id,
+    #   high-precision latency calculation, and degraded fallback flags.
     return ChatResponse(
         answer=result.answer,
         thread_id=payload.thread_id,
@@ -67,6 +101,10 @@ async def chat(
     )
 
 
+# #### 1.6 - Gateway Keep-Alive & Task Shielding
+# - Related Step: Step 4 (sse.py) & Async Programming
+# - Core Concept: Emits SSE comment `: ping\n\n` periodically to prevent reverse-proxy timeouts.
+#   Uses `asyncio.shield` so the agent task won't be cancelled when the heartbeat timer triggers.
 async def _heartbeat_until_done(
     task: asyncio.Future, interval: float
 ) -> AsyncIterator[str]:
@@ -82,6 +120,10 @@ async def _heartbeat_until_done(
             yield sse.format_comment("ping")
 
 
+# #### 1.7 - SSE Event Lifecycle & In-Stream Error Handling
+# - Related Step: Step 4 (sse.py) & Step 3 (errors.py)
+# - Core Concept: Async generator orchestrating lifecycle events (start -> tool_calls -> tokens -> done).
+#   Since HTTP 200 is already committed, errors are delivered as `event: error` SSE payloads.
 async def _stream_turn(
     service: AgentService,
     principal: Principal,
@@ -169,6 +211,10 @@ async def _stream_turn(
     )
 
 
+# #### 1.8 - Streaming Endpoint & Proxy Buffering Control
+# - Related Step: Step 2 (main.py) & Step 4 (sse.py)
+# - Core Concept: Return `StreamingResponse` with `text/event-stream`. Header `X-Accel-Buffering: no`
+#   instructs Nginx/proxies to disable response buffering so tokens stream immediately to frontend.
 @router.post(
     "/chat/stream",
     summary="Ask the agent (SSE stream)",
